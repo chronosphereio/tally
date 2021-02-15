@@ -26,8 +26,8 @@ import (
 	"sync"
 	"time"
 
-	prom "github.com/m3db/prometheus_client_golang/prometheus"
-	"github.com/m3db/prometheus_client_golang/prometheus/promhttp"
+	prom "github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/pkg/errors"
 	"github.com/uber-go/tally"
 )
@@ -530,12 +530,13 @@ func (r *reporter) AllocateTimer(name string, tags map[string]string) tally.Cach
 	)
 	tagKeys := keysFromMap(tags)
 	timerType, buckets, objectives := r.timerConfig(nil)
+	promLabels := makePromLabels(tags)
 	switch timerType {
 	case HistogramTimerType:
 		var histogramVec *prom.HistogramVec
 		histogramVec, err = r.histogramVec(name, tagKeys, name+" histogram", buckets)
 		if err == nil {
-			t := &cachedMetric{histogram: histogramVec.With(tags)}
+			t := &cachedMetric{histogram: histogramVec.With(promLabels).(prom.Histogram)}
 			t.reportTimer = t.reportTimerHistogram
 			timer = t
 		}
@@ -543,7 +544,7 @@ func (r *reporter) AllocateTimer(name string, tags map[string]string) tally.Cach
 		var summaryVec *prom.SummaryVec
 		summaryVec, err = r.summaryVec(name, tagKeys, name+" summary", objectives)
 		if err == nil {
-			t := &cachedMetric{summary: summaryVec.With(tags)}
+			t := &cachedMetric{summary: summaryVec.With(promLabels).(prom.Summary)}
 			t.reportTimer = t.reportTimerSummary
 			timer = t
 		}
@@ -557,18 +558,27 @@ func (r *reporter) AllocateTimer(name string, tags map[string]string) tally.Cach
 	return timer
 }
 
+func makePromLabels(tags map[string]string) prom.Labels {
+	promLabels := make(prom.Labels)
+	for k, v := range tags {
+		promLabels[k] = v
+	}
+	return promLabels
+}
+
 func (r *reporter) AllocateHistogram(
 	name string,
 	tags map[string]string,
 	buckets tally.Buckets,
 ) tally.CachedHistogram {
 	tagKeys := keysFromMap(tags)
+	promLabels := makePromLabels(tags)
 	histogramVec, err := r.histogramVec(name, tagKeys, name+" histogram", buckets.AsValues())
 	if err != nil {
 		r.onRegisterError(err)
 		return noopMetric{}
 	}
-	return &cachedMetric{histogram: histogramVec.With(tags)}
+	return &cachedMetric{histogram: histogramVec.With(promLabels).(prom.Histogram)}
 }
 
 func (r *reporter) Capabilities() tally.Capabilities {
